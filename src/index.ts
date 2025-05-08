@@ -66,20 +66,21 @@ app.post('/webhooks/smartlead', validateWebhookSecret, async (req: Request, res:
 
     // --- Interest Check --- 
     // Trigger if category updated to one of the positive names
-    const isPositiveCategoryUpdate = payload.event_type === 'LEAD_CATEGORY_UPDATED' &&
-                                    payload.lead_category?.new_name &&
-                                    positiveCategoryNames.includes(payload.lead_category.new_name);
+    // const isPositiveCategoryUpdate = payload.event_type === 'LEAD_CATEGORY_UPDATED' &&
+    //                                 payload.lead_category?.new_name &&
+    //                                 positiveCategoryNames.includes(payload.lead_category.new_name);
     
     // TODO: Optionally add check for EMAIL_REPLY event type here as well
     // const isPositiveReply = payload.event_type === 'EMAIL_REPLY' // && some condition
 
     // Check if the event meets our criteria
-    if (!isPositiveCategoryUpdate /* && !isPositiveReply */) { // Add reply check if implemented
-      console.log(`[DEBUG] /webhooks/smartlead: Event type \'${payload.event_type}\' or category \'${payload.lead_category?.new_name}\' not actionable. Skipping.`);
-      return res.status(200).json({ success: true, message: 'Webhook received, not processed (condition not met)' });
-    }
+    // if (!isPositiveCategoryUpdate /* && !isPositiveReply */) { // Add reply check if implemented
+    //   console.log(`[DEBUG] /webhooks/smartlead: Event type '${payload.event_type}' or category '${payload.lead_category?.new_name}' not actionable. Skipping.`);
+    //   return res.status(200).json({ success: true, message: 'Webhook received, not processed (condition not met)' });
+    // }
 
-    console.log(`Positive interaction detected (Category: ${payload.lead_category?.new_name || 'N/A'}, Event: ${payload.event_type}), processing lead...`);
+    // console.log(`Positive interaction detected (Category: ${payload.lead_category?.new_name || 'N/A'}, Event: ${payload.event_type}), processing lead...`);
+    console.log(`Processing SmartLead webhook payload (Event: ${payload.event_type})...`); // Updated log message
 
     // --- Extract Data from Payload --- (Adjust based on actual payload structure)
     const leadData = payload.lead_data;
