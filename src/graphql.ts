@@ -70,4 +70,25 @@ export const CREATE_NOTE_TARGET_MUTATION = `
            id # Get target ID back 
       }
   }
+`;
+
+// Mutation to create a task
+export const CREATE_TASK_MUTATION = `
+  mutation CreateTask($input: TaskCreateInput!) {
+    createTask(data: $input) {
+      id
+      title
+      status
+      # Add other fields if needed in the response
+    }
+  }
+`;
+
+// Mutation to create a task target (link)
+export const CREATE_TASK_TARGET_MUTATION = `
+  mutation CreateTaskTarget($input: TaskTargetCreateInput!) {
+    createTaskTarget(data: $input) {
+      id # Get target ID back
+    }
+  }
 `; 
