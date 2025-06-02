@@ -3,6 +3,7 @@ console.log('[DEBUG] index.ts: Top of file');
 
 import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
+import axios from 'axios'; // Added for OpenRouter API calls
 import { callTwentyApi } from './twenty'; // Import the API call function
 import {
     FIND_COMPANY_QUERY,
@@ -21,6 +22,11 @@ console.log('[DEBUG] index.ts: Loading dotenv');
 dotenv.config();
 console.log('[DEBUG] index.ts: dotenv loaded');
 
+// --- OpenRouter Configuration ---
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const LLM_MODEL_NAME = process.env.LLM_MODEL_NAME;
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
 const app = express();
 console.log('[DEBUG] index.ts: Express app created');
 
@@ -28,9 +34,10 @@ console.log('[DEBUG] index.ts: Express app created');
 app.use(express.json());
 console.log('[DEBUG] index.ts: JSON middleware added');
 
-const PORT = process.env.PORT || 3002; // Default to 3002 if PORT not set
+// const PORT = process.env.PORT || 3002; // PORT will be handled by Render
 const SMARTLEAD_WEBHOOK_SECRET = process.env.SMARTLEAD_WEBHOOK_SECRET;
-console.log(`[DEBUG] index.ts: PORT=${PORT}, SECRET_SET=${!!SMARTLEAD_WEBHOOK_SECRET}`);
+// console.log(`[DEBUG] index.ts: PORT=${PORT}, SECRET_SET=${!!SMARTLEAD_WEBHOOK_SECRET}`);
+console.log(`[DEBUG] index.ts: SECRET_SET=${!!SMARTLEAD_WEBHOOK_SECRET}`);
 
 
 // --- Simple Webhook Secret Validation Middleware (Optional but Recommended) ---
@@ -91,7 +98,70 @@ app.post('/webhooks/smartlead', validateWebhookSecret, async (req: Request, res:
     const companyName = leadData.company_name;
     const website = leadData.website;
     const jobTitle = leadData.jobTitle; 
-    const city = leadData.city;         
+    const city = leadData.city;
+
+    // --- LLM Call for Categorization (Phase 1: Logging Only) ---
+    console.log('[DEBUG] /webhooks/smartlead: Preparing for LLM call.');
+    const emailSubject = payload.email_content?.subject || '';
+    const emailBody = payload.email_content?.body_text || payload.email_content?.body_html || ''; // Prefer text, fallback to HTML
+
+    if (OPENROUTER_API_KEY && LLM_MODEL_NAME && (emailSubject || emailBody)) {
+        const llmPrompt = `You are an AI assistant helping to categorize sales lead email replies. The lead was initially marked as "Interested" by a system. Your task is to analyze the following email reply and categorize it.
+
+Email Subject: ${emailSubject}
+Email Body:
+${emailBody}
+
+Categories:
+1. SL_CAN_BE_AUTOMATED: The lead is asking for general information that can be handled by an automated email sequence (e.g., requesting a catalog, brochure, pricing sheet, or expressing general continued interest without specific questions).
+2. TWENTY_NEEDS_MANUAL_RESPONSE: The lead has specific questions, unique requirements, or is seeking clarification that requires a personalized, manual response.
+3. URGENT_MANUAL_RESPONSE: The lead expresses urgent concerns, complaints, or critical issues that need immediate manual attention.
+4. NOT_INTERESTED_REPLY: The lead explicitly states they are no longer interested, it's not a good fit, or asks to be removed.
+
+Output your response strictly in JSON format with the following keys:
+- "category": (string, one of the categories above)
+- "summary": (string, a brief 1-2 sentence summary of the lead's request or statement)
+- "extracted_questions": (array of strings, if category is TWENTY_NEEDS_MANUAL_RESPONSE or URGENT_MANUAL_RESPONSE, list the specific questions asked; otherwise, an empty array)`;
+
+        try {
+            console.log('[DEBUG] /webhooks/smartlead: Calling OpenRouter API...');
+            const llmResponse = await axios.post(
+                OPENROUTER_API_URL,
+                {
+                    model: LLM_MODEL_NAME,
+                    messages: [{ role: 'user', content: llmPrompt }],
+                    response_format: { type: "json_object" } // Request JSON output if model supports
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+            console.log('[DEBUG] /webhooks/smartlead: LLM API Response Status:', llmResponse.status);
+            console.log('[DEBUG] /webhooks/smartlead: LLM API Response Data:');
+            console.log(JSON.stringify(llmResponse.data, null, 2));
+
+            // For Phase 1, we are only logging. In Phase 2, we'll use llmResponse.data.choices[0].message.content
+            // and parse it as JSON to get category, summary, extracted_questions.
+
+        } catch (llmError: any) {
+            console.error('[DEBUG] /webhooks/smartlead: Error calling LLM API:');
+            if (llmError.response) {
+                console.error('LLM Error Response Data:', JSON.stringify(llmError.response.data, null, 2));
+                console.error('LLM Error Response Status:', llmError.response.status);
+                console.error('LLM Error Response Headers:', JSON.stringify(llmError.response.headers, null, 2));
+            } else if (llmError.request) {
+                console.error('LLM Error Request Data:', llmError.request);
+            } else {
+                console.error('LLM Error Message:', llmError.message);
+            }
+        }
+    } else {
+        console.warn('[DEBUG] /webhooks/smartlead: Skipping LLM call due to missing API key, model name, or email content.');
+    }
+    // --- End of LLM Call Section ---
 
     let companyDomain: string | undefined;
     console.log('[DEBUG] /webhooks/smartlead: Determining company domain');
@@ -100,14 +170,14 @@ app.post('/webhooks/smartlead', validateWebhookSecret, async (req: Request, res:
             const url = new URL(website);
             companyDomain = url.hostname.replace(/^www\./, '');
             console.log(`[DEBUG] /webhooks/smartlead: Derived domain: ${companyDomain}`);
-        } catch (e) { 
+        } catch (e) {
             console.warn(`[DEBUG] /webhooks/smartlead: Could not parse website URL: ${website}`, e);
         }
     } else if (companyName) {
         console.log(`[DEBUG] /webhooks/smartlead: No website for ${companyName}, will find by name.`);
     }
 
-    // --- 1. Find or Create Company --- 
+    // --- 1. Find or Create Company ---
     let companyId: string | null = null;
     console.log('[DEBUG] /webhooks/smartlead: Starting Find/Create Company');
 
@@ -343,17 +413,25 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 });
 
 // --- Start the server ---
+// Render provides the PORT environment variable
+const servicePort = process.env.PORT || 3002; // Fallback for local if needed, but Render's PORT is primary
 console.log('[DEBUG] index.ts: Setting up app.listen');
-app.listen(PORT, () => {
-  console.log(`[DEBUG] index.ts: Server listening callback triggered on port ${PORT}`);
-  console.log(`SmartLead-Twenty Integration Service listening on port ${PORT}`);
-  console.log(`Webhook endpoint available at: http://localhost:${PORT}/webhooks/smartlead`);
+app.listen(servicePort, () => {
+  // console.log(`[DEBUG] index.ts: Server listening callback triggered on port ${servicePort}`);
+  console.log(`SmartLead-Twenty Integration Service listening on port ${servicePort}`);
+  console.log(`Webhook endpoint available at: http://localhost:${servicePort}/webhooks/smartlead (if local)`);
   if (!process.env.TWENTY_API_TOKEN) {
     console.warn('Warning: TWENTY_API_TOKEN is not set in the .env file!');
   }
-   if (!SMARTLEAD_WEBHOOK_SECRET) {
-    console.warn('Warning: SMARTLEAD_WEBHOOK_SECRET not set in the .env file. Webhook validation disabled.');
+  if (!OPENROUTER_API_KEY) {
+    console.warn('Warning: OPENROUTER_API_KEY is not set in the .env file!');
   }
-}); 
+  if (!LLM_MODEL_NAME) {
+    console.warn('Warning: LLM_MODEL_NAME is not set in the .env file!');
+  }
+  if (!SMARTLEAD_WEBHOOK_SECRET) {
+    console.warn('Warning: SMARTLEAD_WEBHOOK_SECRET is not set in the .env file. Webhook validation disabled.');
+  }
+});
 
 console.log('[DEBUG] index.ts: Bottom of file, after app.listen call');
